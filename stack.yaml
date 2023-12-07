@@ -1,0 +1,124 @@
+heat_template_version: 2016-10-14
+description: AutoScaling WordPress with Load Balancer
+
+parameters:
+  image:
+    type: string
+    description: Image used for servers
+  flavor:
+    type: string
+    description: Flavor used by the web servers
+  network:
+    type: string
+    description: Network used by the server
+  subnet_id:
+    type: string
+    description: Subnet on which the load balancer will be located. external subnet is recommended.
+  external_network_id:
+    type: string
+    description: Subnet on which the load balancer will be located. external subnet is recommended.
+  username:
+    type: string
+    default: test 
+    description: Username for cloud-config
+  password:
+    default: India@143
+    type: string
+    description: Password for cloud-config
+  keypair:
+    default: ssh-rsa
+    type: string
+    description: SSH keypair for cloud-config
+  
+resources:
+  asg:
+    type: OS::Heat::AutoScalingGroup
+    properties:
+      min_size: 1
+      max_size: 3
+      resource:
+        type: instance_server.yaml
+        properties:
+          flavor: {get_param: flavor}
+          image: {get_param: image}
+          network: {get_param: network}
+          
+          
+  web_server_scaleup_policy:
+    type: OS::Heat::ScalingPolicy
+    properties:
+      adjustment_type: change_in_capacity
+      auto_scaling_group_id: {get_resource: asg}
+      cooldown: 60
+      scaling_adjustment: 1
+
+  web_server_scaledown_policy:
+    type: OS::Heat::ScalingPolicy
+    properties:
+      adjustment_type: change_in_capacity
+      auto_scaling_group_id: {get_resource: asg}
+      cooldown: 60
+      scaling_adjustment: -1
+  
+  lb_floating_ip:
+    type: OS::Neutron::FloatingIP
+    properties:
+      floating_network: {get_param: external_network_id}
+      port_id: { get_attr: [lb, vip_port_id] }
+
+  lb:
+    type: OS::Octavia::LoadBalancer
+    properties:
+      vip_subnet: {get_param: subnet_id}
+      admin_state_up: True
+
+  lb_listener:
+    type: OS::Octavia::Listener
+    properties:
+      loadbalancer: {get_resource: lb}
+      protocol: HTTP
+      protocol_port: 80
+      admin_state_up: True
+
+  lb_pool:
+    type: OS::Octavia::Pool
+    properties:
+      loadbalancer: {get_resource: lb}
+      protocol: HTTP
+      lb_algorithm: ROUND_ROBIN
+      admin_state_up: True
+
+outputs:
+  scale_up_url:
+    description: >
+      This URL is the webhook to scale up the auto-scaling group. You
+      can invoke the scale-up operation by doing an HTTP POST to this
+      URL; no body nor extra headers are needed.
+    value: {get_attr: [web_server_scaleup_policy]}
+
+  scale_down_url:
+    description: >
+      This URL is the webhook to scale down the auto-scaling group.
+      You can invoke the scale-down operation by doing an HTTP POST to
+      this URL; no body nor extra headers are needed.
+    value: {get_attr: [web_server_scaledown_policy]}
+
+  lb_ip:
+    description: IP address of the Load Balancer
+    value: {get_attr: [lb, vip_address]}
+
+  pool_id:
+    description: ID of the created pool
+    value: {get_resource: lb_pool}
+  
+  compute_ids:
+    description: IDs of the compute instances in the auto-scaling group
+    value: {get_attr: [asg,refs]}
+  
+  lb_id:
+    description: ID of the Load Balancer
+    value: {get_resource: lb}
+  
+  lb_listener:
+    description: ID of the Load Balancer
+    value: {get_resource: lb_listener}
